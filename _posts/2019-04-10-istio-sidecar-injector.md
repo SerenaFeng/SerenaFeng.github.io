@@ -37,7 +37,7 @@ configmap and the mesh's istio configmap to render the configuration.
 Firstly let's take a look at the istio-sidecar-injector configmap, to get an idea of what actually is
 going on.
 
-```bash yaml
+```
 $ kubectl -n istio-system get configmap istio-sidecar-injector -o=jsonpath='{.data.config}'
 
 policy: enabled
@@ -88,7 +88,7 @@ As you can see, the configmap contains the configuration for both the istio-init
 
 Then, let's look at the istio configmap.
 
-```bash yaml
+```
 $ kubectl -n istio-system describe configmap istio
 
 # Set the following variable to true to disable policy checks by the Mixer.
