@@ -16,7 +16,7 @@ update: The journey of Istio begins
 To be a Istio mesh pod, the sidecar containers must be injected in every pod.
 This is done automatically or manually.
 
-## Sidecar containers
+# Sidecar containers
 
 During the injecting, two containers will be injected to the pod, istio-init and istio-proxy:
 
@@ -28,7 +28,7 @@ sidecar proxy.
 `istio-proxy`
 The actual sidecar proxy, route all the traffic in/out the pod (based on Envoy).
 
-## Sidecar injection
+# Sidecar injection
 
 In simple terms, sidecar injection is adding the configuration of the aforementioned containers to
 the pod template. Both manual as well as automatic injection leverage the istio-sidecar-injector
@@ -116,7 +116,7 @@ networks: {}
 As seen above, it defines [mesh-wide variables](<https://istio.io/docs/reference/config/istio.mesh.v1alpha1/>) 
 shared by all Envoy instances.
 
-### Manually
+## Manually
 
 The manual way leverage the istioctl CLI tool to modify the pod template spec. You can inject the
 the sidecar either using the in-cluster configuration:
@@ -134,3 +134,4 @@ $ istioctl kube-inject -f example.yaml \
                        --output example-injected.yaml
 ```
 
+## Automatically
