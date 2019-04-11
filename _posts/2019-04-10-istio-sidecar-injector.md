@@ -135,3 +135,58 @@ $ istioctl kube-inject -f example.yaml \
 ```
 
 ## Automatically
+
+Most of the times, you don't want to manually inject the sidecar every time deploying the pod, but 
+would prefer Istio doing that for you automatically, which is also the recommended approach. With 
+the help of [MutatingAdmissionWebhook](<https://kubernetes.io/docs/admin/admission-controllers/>), 
+Istio fulfill the requirements. Let's take a look at the istio-sidecar-injector mutating webhook 
+configuration.
+
+```bash
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingWebhookConfiguration
+metadata:
+  labels:
+    app: sidecarInjectorWebhook
+    chart: sidecarInjectorWebhook
+    heritage: Tiller
+    release: istio
+  name: istio-sidecar-injector
+  ......
+webhooks:
+- clientConfig:
+    service:
+      name: istio-sidecar-injector
+      namespace: istio-system
+      path: /inject
+  failurePolicy: Fail
+  name: sidecar-injector.istio.io
+  namespaceSelector:
+    matchLabels:
+      istio-injection: enabled
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    resources:
+    - pods
+  sideEffects: Unknown
+```
+
+`namespaceSelector` label is used to match the namespace for sidecar injection with the label
+`istio-injection: enabled`. To change how namespaces are selected for the injection, you can edit
+`MutatingWebhookConfiguration` using `kubectl edit mutatingwebhookconfiguration istio-sidecar-injector`,
+after that restart the sidecar injector pod. 
+
+Unlike the manual way, automatic sidecar injection happens when the pods are created, so nothing 
+change will occur in the deployment configuration. To see the istio-init and istio-proxy you need to
+use `kubectl describe`.
+
+There are several ways to control the automatic injection. Let's summarize below:
+
+### policy field in istio-sidecar-injector configmap 
+
+This field is used to determine whether or not inject the sidecar into pods by default. 
