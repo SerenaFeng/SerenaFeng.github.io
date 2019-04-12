@@ -163,8 +163,8 @@ There are several configurations which control the automatic injection.
 
 ### namespaceSelector
 
-`namespaceSelector` is configured in istio-sidecar-injector configmap, uses to determine how the
-namespace is selected. Let's look at the istio-sidecar-injector configmap below: 
+`namespaceSelector` is configured in istio-sidecar-injector MutatingWebhookConfiguration,
+used to determine how the namespace is selected for auto injection. Let's look at it below: 
 
 ```bash
 apiVersion: admissionregistration.k8s.io/v1beta1
@@ -200,15 +200,44 @@ webhooks:
   sideEffects: Unknown
 ```
 
-Based on the above configuration, if a namespace is labeled as "istio-injection: enabled", the pod
-created under it will possibly get sidecar injected, here we use 'possibly' because it may not be
+With the above `namespaceSelector` configuration, if a namespace is labeled as
+"istio-injection: enabled", the auto injection of the namespace is enabled, which means the pod
+created under it will *possibly* get sidecar injected, here we use *possibly* because it may not be
 injected due to the other factors, which we will introduce later. But if a namespace is not labeled as
-"istio-injection: enabled", the pod created under it will definitely not get injected (except it is 
-manually injected).
+"istio-injection: enabled", the pod created under it will definitely not get auto injected.
 
-To change how namespaces are selected for the injection, you can edit `MutatingWebhookConfiguration`
-using `kubectl edit mutatingwebhookconfiguration istio-sidecar-injector`, after that you need to 
-restart the sidecar injector pod. 
+On the contrary, The `namespaceSelector` configuration shown below will allow all the namespaces
+except `istio-system` to enable auto injection, unless it is labeled as "istio-injection: disabled". 
+
+```yaml
+......
+webhooks:
+- clientConfig:
+    service:
+      name: istio-sidecar-injector
+      namespace: istio-system
+      path: /inject
+   ......
+  namespaceSelector:
+    matchExpressions:
+    - key: name
+      operator: NotIn
+      values:
+      - istio-system
+    - key: istio-injection
+      operator: NotIn
+      values:
+      - disabled
+......
+```
+
+To change how namespaces are selected for the injection, you can edit `namespaceSelector` in 
+`MutatingWebhookConfiguration` using the following mentioned method, and after modify it, you need
+to restart the sidecar injector pod. 
+
+```bash
+$ kubectl edit mutatingwebhookconfiguration istio-sidecar-injector
+```
 
 To label the namespace, use 'kubectl label namespace' CLI command like below:
 
