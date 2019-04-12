@@ -7,6 +7,7 @@ head-style: text
 tags: 
   - Istio
   - service mesh
+  - sidecar
 ---
 
 update: The journey of Istio begins
