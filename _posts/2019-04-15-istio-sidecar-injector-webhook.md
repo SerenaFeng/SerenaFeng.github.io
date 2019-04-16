@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "istio-sidecar-injector source code analysis"
+title: "istio-sidecar-injector-webhook analysis"
 subtitle: 'How istio sidecar injector works'
 author: 'serena'
 head-style: text
@@ -19,7 +19,7 @@ injection works through understanding the source code of istio-sidecar-injector 
 - Dockerfile: istio/pilot/docker/Dockerfile.sidecar_injector
 - CLI command: /usr/local/bin/sidecar-injector
 
-## Parameters if CLI command
+## Arguments of sidecar-injector command
 
 First of all, let's take a look at the startup parameters when starting the sidecar-injector
 progress in container sidecar-injector-webhook.
