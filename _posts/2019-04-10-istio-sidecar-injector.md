@@ -175,6 +175,8 @@ There are several configurations which control the automatic injection.
 used to determine how the namespace is selected for auto injection. Let's look at it below: 
 
 ```bash
+$ k g MutatingWebhookConfiguration istio-sidecar-injector -o yaml
+
 apiVersion: admissionregistration.k8s.io/v1beta1
 kind: MutatingWebhookConfiguration
 metadata:
@@ -188,6 +190,7 @@ metadata:
 webhooks:
 - clientConfig:
     service:
+      caBundle: xxxxxx
       name: istio-sidecar-injector
       namespace: istio-system
       path: /inject
