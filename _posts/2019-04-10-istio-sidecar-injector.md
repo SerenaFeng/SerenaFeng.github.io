@@ -35,6 +35,8 @@ In simple terms, sidecar injection is adding the configuration of the aforementi
 the pod template. Both manual as well as automatic injection leverage the istio-sidecar-injector
 configmap and the mesh's istio configmap to render the configuration.
 
+## istio-sidecar-injector configmap
+
 Firstly let's take a look at the istio-sidecar-injector configmap, to get an idea of what actually is
 going on.
 
@@ -87,17 +89,20 @@ template: |-
 
 As you can see, the configmap contains the configuration for both the istio-init container and the istio-proxy container.
 
+## istio configmap
+
 Then, let's look at the istio configmap.
 
 ```
 $ kubectl -n istio-system describe configmap istio
 
-# Set the following variable to true to disable policy checks by the Mixer.
-# Note that metrics will still be reported to the Mixer.
-disablePolicyChecks: true
-
-# Set enableTracing to false to disable request tracing.
-enableTracing: true
+mixerCheckServer: istio-policy.istio-system.svc.cluster.local:9091
+mixerReportServer: istio-telemetry.istio-system.svc.cluster.local:9091
+# policyCheckFailOpen allows traffic in cases when the mixer policy service cannot be reached.
+# Default is false which means the traffic is denied when the client is unable to connect to Mixer.
+policyCheckFailOpen: false
+# Let Pilot give ingresses the public IP of the Istio ingressgateway
+ingressService: istio-ingressgateway
 ......
 defaultConfig:
   #
@@ -115,7 +120,9 @@ networks: {}
 ```
 
 As seen above, it defines [mesh-wide variables](<https://istio.io/docs/reference/config/istio.mesh.v1alpha1/>) 
-shared by all Envoy instances.
+shared by all Envoy instances. For instance `mixerCheckServer` and `mixerReportServer` indicates
+the proxies where to report the policy check calls and policy report calls; while `ingressService`
+defines which Kubernetes service is the istio ingress controller.
 
 ## Manually
 
@@ -136,7 +143,7 @@ $ istioctl kube-inject -f example.yaml \
 ```
 
 Write a new istio-sidecar-injector or istio configmap is a heavy and tedious work, the recommended
-way is download the existed ones and modify:
+way is to download the existed ones and modify:
 
 ```bash
 $ kubectl -n istio-system get configmap istio-sidecar-injector -o=jsonpath='{.data.config}' > inject-config.yaml
