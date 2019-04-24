@@ -138,7 +138,7 @@ type Webhook struct {
   and keyFile, by doing so, any change of the configmap `istio`, `istio-sidecar-injector` happens
   will be detected and echoed by sidecar-injector webhook
 
-### startup the webhook
+### application initialization
 
 The main work of root command is to create a mutating webhook, which is in charge of initializing
 the `/inject` server and creating configuration watchers. 
@@ -297,11 +297,11 @@ func patchCertLoop(stopCh <-chan struct{}) error {
 }
 ```
 
-finally, implementing webhook server leveraging goroutine of `webserver.Run`. Basically, it implements
+finally, implementing webhook server leveraging goroutine of `webserver.Run`. Basically, it includes 
 three processes:
 - start the webhook server, listen and process '/inject' event.
 - periodically update `healthCheckFile`, to indicate webhook server is going on healthily. Typically,
-  it is used in [probe](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector-webhook/#probe-command>)
+  it is used in [probe](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#healthiness-detection>)
   command.
 - update configuration based on the change of the four configuration files, to prevent frequent
   change of configuration files, a debounce timer is employed. 
@@ -345,7 +345,7 @@ func (wh *Webhook) Run(stop <-chan struct{}) {
 }
 ```
 
-### probe command
+### healthiness detection
 
 sidecar-injector implements a `probe` subcommand to check the liveness or readiness of the
 locally-running sidecar-injector-webhook server. The configuration in pod's yaml is as below, 
@@ -385,6 +385,7 @@ shorter than specified update interval (defined by `--interval` option in the ab
 server is judged to be successfully running. 
 
 ```gotemplate
+// probe subcommand definition
 	probeCmd = &cobra.Command{
 		Use:   "probe",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -396,6 +397,7 @@ server is judged to be successfully running.
 		},
 	}
 
+// file status check
 func (fc *fileClient) GetStatus() error {
 	stat, err := fc.statFunc(fc.opt.Path)
 	if err != nil {
@@ -411,3 +413,196 @@ func (fc *fileClient) GetStatus() error {
 	return nil
 }
 ```
+
+## Injection Procedure
+
+As well known, the main work of sidecar-injector-webhook is to inject istio-init & istio-proxy
+containers into istio mesh pod automatically, this is done by handling `/inject` http message.
+ 
+When pod creation request comes, Kubernetes check auto injection is opened on the required namespace,
+if so, it will send a injection request message to sidecar-injector-webhook(I guess so, to be
+verified ^_^),  After receiving it, sidecar-injector-webhook begins to do the injection. The working 
+function is `webhook.inject`.
+
+```gotemplate
+func (wh *Webhook) inject(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+    ......
+	if !injectRequired(ignoredNamespaces, wh.sidecarConfig, &pod.Spec, &pod.ObjectMeta) {
+		return &v1beta1.AdmissionResponse{
+			Allowed: true,
+		}
+	}
+
+	// due to bug https://github.com/kubernetes/kubernetes/issues/57923,
+	// k8s sa jwt token volume mount file is only accessible to root user, not istio-proxy(the user that istio proxy runs as).
+	// workaround by https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod
+	if wh.meshConfig.EnableSdsTokenMount && wh.meshConfig.SdsUdsPath != "" {
+		var grp = int64(1337)
+		pod.Spec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup: &grp,
+		}
+	}
+
+	spec, status, err := injectionData(wh.sidecarConfig.Template, wh.sidecarTemplateVersion, &pod.ObjectMeta, &pod.Spec, &pod.ObjectMeta, wh.meshConfig.DefaultConfig, wh.meshConfig) // nolint: lll
+    ......
+
+	annotations := map[string]string{annotationStatus.name: status}
+
+	patchBytes, err := createPatch(&pod, injectionStatus(&pod), annotations, spec)
+    ......
+
+	return &reviewResponse
+}
+```
+
+### inject or not
+
+First of all, sidecar-injector-webhook checks whether the auto injection is allowed.
+
+1. pod leveraging host network is not injected, the reason is explained in the code comment.
+
+```gotemplate
+	// Skip injection when host networking is enabled. The problem is
+	// that the iptable changes are assumed to be within the pod when,
+	// in fact, they are changing the routing at the host level. This
+	// often results in routing failures within a node which can
+	// affect the network provider within the cluster causing
+	// additional pod failures.
+	if podSpec.HostNetwork {
+		return false
+	}
+```
+
+2. special kubernetes system namespaces, such as kube-system and kube-public is not injected
+
+```gotemplate
+const (
+	// NamespaceSystem is the system namespace where we place system components.
+	NamespaceSystem string = "kube-system"
+	// NamespacePublic is the namespace where we place public info (ConfigMaps)
+	NamespacePublic string = "kube-public"
+)
+
+var ignoredNamespaces = []string{
+	metav1.NamespaceSystem,
+	metav1.NamespacePublic,
+}
+
+	// skip special kubernetes system namespaces
+	for _, namespace := range ignored {
+		if metadata.Namespace == namespace {
+			return false
+		}
+	}
+```
+
+3. if `sidecar.istio.io/inject` annotation is not appeared in the pod spec, other default policies
+   such as `neverInjectSelector`, `alwaysInjectSelector` or `policy` field will be checked. Or else,
+   both `neverInjectSelector` and `alwaysInjectSelector` check are skipped, under any condition
+   during `config.Policy` branch, `required = inject` will be returned, in this case, if
+   `sidecar.istio.io/inject` is specified as "y", "yes", "true" or "on", `required=true` is return; 
+   otherwise `required = nil` is returned, which means not inject. 
+
+```gotemplate
+	var useDefault bool
+	var inject bool
+	switch strings.ToLower(annotations[annotationPolicy.name]) {
+	// http://yaml.org/type/bool.html
+	case "y", "yes", "true", "on":
+		inject = true
+	case "":
+		useDefault = true
+	}
+
+	var required bool
+	switch config.Policy {
+	case InjectionPolicyDisabled:
+		if useDefault {
+			required = false
+		} else {
+			required = inject
+		}
+	case InjectionPolicyEnabled:
+		if useDefault {
+			required = true
+		} else {
+			required = inject
+		}
+	}
+``` 
+
+4. if `sidecar.istio.io/inject` is not given, and `neverInjectorSelector` is matched, inject is
+  set to be false, and `alwayInjectorSelector` is skipped. 
+   
+```gotemplate
+	// If an annotation is not explicitly given, check the LabelSelectors, starting with NeverInject
+	if useDefault {
+		for _, neverSelector := range config.NeverInjectSelector {
+			selector, err := metav1.LabelSelectorAsSelector(&neverSelector)
+			if err != nil {
+				log.Warnf("Invalid selector for NeverInjectSelector: %v (%v)", neverSelector, err)
+			} else {
+				if !selector.Empty() && selector.Matches(labels.Set(metadata.Labels)) {
+					inject = false
+					useDefault = false
+					break
+				}
+			}
+		}
+	}
+
+```
+
+5. if `sidecar.istio.io/inject` is not given, and `neverInjectorSelector` is not matched,
+   `alwayInjectorSelector` is executed. if match, inject is set to true.
+
+```gotemplate
+	// If there's no annotation nor a NeverInjectSelector, check the AlwaysInject one
+	if useDefault {
+		for _, alwaysSelector := range config.AlwaysInjectSelector {
+			selector, err := metav1.LabelSelectorAsSelector(&alwaysSelector)
+			if err != nil {
+				log.Warnf("Invalid selector for AlwaysInjectSelector: %v (%v)", alwaysSelector, err)
+			} else {
+				if !selector.Empty() && selector.Matches(labels.Set(metadata.Labels)) {
+					log.Debugf("Explicitly enabling injection for pod %s/%s due to pod labels matching AlwaysInjectSelector config map entry.",
+						metadata.Namespace, potentialPodName(metadata))
+					inject = true
+					useDefault = false
+					break
+				}
+			}
+		}
+	}
+```
+
+6. finally, if none of the above satisfied, here comes to `policy` check, if it it `enabled`, inject
+   is required, or else, not inject
+
+```gotemplate
+	var required bool
+	switch config.Policy {
+	default: // InjectionPolicyOff
+		log.Errorf("Illegal value for autoInject:%s, must be one of [%s,%s]. Auto injection disabled!",
+			config.Policy, InjectionPolicyDisabled, InjectionPolicyEnabled)
+		required = false
+	case InjectionPolicyDisabled:
+		if useDefault {
+			required = false
+		} else {
+			required = inject
+		}
+	case InjectionPolicyEnabled:
+		if useDefault {
+			required = true
+		} else {
+			required = inject
+		}
+	}
+```
+
+### let's inject now
+
+Now then, let's see how injection is done.
+
+
