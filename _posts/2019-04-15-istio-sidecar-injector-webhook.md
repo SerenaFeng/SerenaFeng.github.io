@@ -125,16 +125,18 @@ type Webhook struct {
 }
 ```
 
-- `configFile` is the `injectConfigFile` file
-- `meshFile` is the `meshConfig` file
 - `sidecarConfig` is the content read from file `injectConfigFile`
 - `meshConfig` is the content of file `meshConfig` and with default values applied
+- `healthCheckInterval` frequency defined to update healthCheckFile
+- `healthCheckFile` the file to be updated periodically, based on `healthCheckInterval` 
+- `server` is the http server handle the event from route `/inject`
+- `meshFile` is the `meshConfig` file
+- `configFile` is the `injectConfigFile` file
 - `watcher` is a [fsnotify](<https://github.com/howeyc/fsnotify>) watcher, it is a kind of
   notification system based on file system, any change under the watched directory/file will to
   notified to the watcher. Here the watcher is used to monitor the meshFile, configFile, certFile
   and keyFile, by doing so, any change of the configmap `istio`, `istio-sidecar-injector` happens
   will be detected and echoed by sidecar-injector webhook
-- `server` is the http server handle the event from route `/inject`
 
 ### startup the webhook
 
@@ -225,7 +227,7 @@ webhooks:
 ```
 
 The `patchCertLoop` workflow is shown below, it is immature, the knowledge of `client-go` relevant
-needs to be enriched or even corrected.
+needs to be enriched or maybe corrected.
 
 ```gotemplate
 func patchCertLoop(stopCh <-chan struct{}) error {
@@ -278,7 +280,7 @@ func patchCertLoop(stopCh <-chan struct{}) error {
 	go func() {
 		for {
 			select {
-			// event from monitoring webhook configuration
+            // event from monitoring webhook configuration
 			case <-shouldPatch:
 				doPatch(client, caCertPem)
             // event from monitoring caCertFile
@@ -298,8 +300,9 @@ func patchCertLoop(stopCh <-chan struct{}) error {
 finally, implementing webhook server leveraging goroutine of `webserver.Run`. Basically, it implements
 three processes:
 - start the webhook server, listen and process '/inject' event.
-- periodically update healthCheckFile, to indicate webhook server is going on healthily. Typically,
-  it is used in `sidecar-injector probe` command.
+- periodically update `healthCheckFile`, to indicate webhook server is going on healthily. Typically,
+  it is used in [probe](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector-webhook/#probe-command>)
+  command.
 - update configuration based on the change of the four configuration files, to prevent frequent
   change of configuration files, a debounce timer is employed. 
 
@@ -317,7 +320,7 @@ func (wh *Webhook) Run(stop <-chan struct{}) {
 		healthC = t.C
 		defer t.Stop()
 	}
-	// define the debounce timer
+    // define the debounce timer
 	var timerC <-chan time.Time
     
 	for {
@@ -342,7 +345,70 @@ func (wh *Webhook) Run(stop <-chan struct{}) {
 }
 ```
 
+### probe command
 
+sidecar-injector implements a `probe` subcommand to check the liveness or readiness of the
+locally-running sidecar-injector-webhook server. The configuration in pod's yaml is as below, 
+`--prob-path` referencing to the aforementioned `healthCheckFile` during the healthCheck procedure.
 
+```yaml
+      livenessProbe:
+        exec:
+          command:
+          - /usr/local/bin/sidecar-injector
+          - probe
+          - --probe-path=/health
+          - --interval=4s
+        failureThreshold: 3
+        initialDelaySeconds: 4
+        periodSeconds: 4
+        successThreshold: 1
+        timeoutSeconds: 1
+      readinessProbe:
+        exec:
+          command:
+          - /usr/local/bin/sidecar-injector
+          - probe
+          - --probe-path=/health
+          - --interval=4s
+        failureThreshold: 3
+        initialDelaySeconds: 4
+        periodSeconds: 4
+        successThreshold: 1
+        timeoutSeconds: 1
+```
 
+The `probe` work is implemented by checking whether the `healthCheckFile` is updated recently ():
+As we say during the webhook server healthCheck procedure, `healthCheckFile` is updated
+periodically if the server is running well. This feature is used by `probe` subcommand to detect the
+liveness and readiness of the server by checking how long has the file being unmodified. If it is
+shorter than specified update interval (defined by `--interval` option in the above), the webhook
+server is judged to be successfully running. 
 
+```gotemplate
+	probeCmd = &cobra.Command{
+		Use:   "probe",
+		RunE: func(cmd *cobra.Command, args []string) error {
+		    ......
+			if err := probe.NewFileClient(&flags.probeOptions).GetStatus(); err != nil {
+				return fmt.Errorf("fail on inspecting path %s: %v", flags.probeOptions.Path, err)
+			}
+			......
+		},
+	}
+
+func (fc *fileClient) GetStatus() error {
+	stat, err := fc.statFunc(fc.opt.Path)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	// Sometimes filesystem / goroutine scheduling takes time, some buffer should be
+	// allowed for the validity of a file.
+	const jitter = 10 * time.Millisecond
+	if mtime := stat.ModTime(); now.Sub(mtime) > fc.opt.UpdateInterval+jitter {
+		return fmt.Errorf("file %s is too old (last modified time %v, should be within %v)", fc.opt.Path, mtime, fc.opt.UpdateInterval+jitter)
+	}
+	return nil
+}
+```
