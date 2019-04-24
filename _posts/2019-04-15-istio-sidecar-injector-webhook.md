@@ -378,10 +378,9 @@ locally-running sidecar-injector-webhook server. The configuration in pod's yaml
         timeoutSeconds: 1
 ```
 
-The `probe` work is implemented by checking whether the `healthCheckFile` is updated recently ():
-As we say during the webhook server healthCheck procedure, `healthCheckFile` is updated
-periodically if the server is running well. This feature is used by `probe` subcommand to detect the
-liveness and readiness of the server by checking how long has the file being unmodified. If it is
+As previously mentioned that, `healthCheckFile` is updated periodically if the server is running
+well. This feature is taken advantage by `probe` subcommand to detect the liveness and readiness of
+the server by checking how long has the file being unmodified. If it is
 shorter than specified update interval (defined by `--interval` option in the above), the webhook
 server is judged to be successfully running. 
 
