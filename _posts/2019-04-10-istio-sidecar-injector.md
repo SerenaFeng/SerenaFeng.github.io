@@ -40,7 +40,7 @@ configmap and the mesh's istio configmap to render the configuration.
 Firstly let's take a look at the istio-sidecar-injector configmap, to get an idea of what actually is
 going on.
 
-```
+```yaml
 $ kubectl -n istio-system get configmap istio-sidecar-injector -o=jsonpath='{.data.config}'
 
 policy: enabled
@@ -93,7 +93,7 @@ As you can see, the configmap contains the configuration for both the istio-init
 
 Then, let's look at the istio configmap.
 
-```
+```yaml
 $ kubectl -n istio-system describe configmap istio
 
 mixerCheckServer: istio-policy.istio-system.svc.cluster.local:9091
@@ -256,6 +256,14 @@ To label the namespace, use 'kubectl label namespace' CLI command like below:
 $ kubectl label namespace default istio-injection=enabled
 ```
 
+To check whether a namespace is under istio mesh, use 'kubectl get namespace' command:
+
+```bash
+$ kubectl get namespace -L istio-injection
+$ kubectl get namespace -l istio-injection
+$ kubectl get namespace --show-labels
+
+```
 ### sidecar.istio.io/inject
 
 `sidecar.istio.io/inject` is a kind of pod annotation, when the value if it is 'true', the pod will

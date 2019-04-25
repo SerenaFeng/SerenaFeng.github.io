@@ -420,9 +420,22 @@ As well known, the main work of sidecar-injector-webhook is to inject istio-init
 containers into istio mesh pod automatically, this is done by handling `/inject` http message.
  
 When pod creation request comes, Kubernetes check auto injection is opened on the required namespace,
-if so, it will send a injection request message to sidecar-injector-webhook(I guess so, to be
+if so, it will send a injection request message to sidecar-injector-webhook (I guess so, to be
 verified ^_^),  After receiving it, sidecar-injector-webhook begins to do the injection. The working 
 function is `webhook.inject`.
+
+The workflow mainly includes 3 steps:
+
+- [inject or not](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#inject-or-not>).
+  according to `sidecar.istio.io/inject` annotation, `neverInjectSelector`, 
+  `alwaysInjectSelector` and `policy` settings, determine whether injection is required or not
+- [get injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#get-injection-data>).
+  based on `meshConfig` and `podSpec` to render out a instance of
+  `istio-sidecar-injector` configmap as the injection data.
+- [patch podSpec](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#patch-podspec>).
+  using the injection data out on the previous step, to patch the podSpec, adding
+  istio sidecar related configurations, such as add or change annotations["sidecar.istio.io/status"],
+  add `istio-init` initContainer, `istio-proxy` container. 
 
 ```gotemplate
 func (wh *Webhook) inject(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
@@ -554,7 +567,7 @@ var ignoredNamespaces = []string{
 ```
 
 5. if `sidecar.istio.io/inject` is not given, and `neverInjectorSelector` is not matched,
-   `alwayInjectorSelector` is executed. if match, inject is set to true.
+   `alwayInjectorSelector` is checked. if match, inject is set to true.
 
 ```gotemplate
 	// If there's no annotation nor a NeverInjectSelector, check the AlwaysInject one
@@ -601,8 +614,267 @@ var ignoredNamespaces = []string{
 	}
 ```
 
-### let's inject now
+### get injection data 
 
-Now then, let's see how injection is done.
+The major part of istio-sidecar-injector configmap used in injection is `template` field, the
+rendered structure is:
 
+```gotemplate
+// SidecarInjectionSpec collects all container types and volumes for
+// sidecar mesh injection
+type SidecarInjectionSpec struct {
+	// RewriteHTTPProbe indicates whether Kubernetes HTTP prober in the PodSpec
+	// will be rewritten to be redirected by pilot agent.
+	RewriteAppHTTPProbe bool                          `yaml:"rewriteAppHTTPProbe"`
+	InitContainers      []corev1.Container            `yaml:"initContainers"`
+	Containers          []corev1.Container            `yaml:"containers"`
+	Volumes             []corev1.Volume               `yaml:"volumes"`
+	DNSConfig           *corev1.PodDNSConfig          `yaml:"dnsConfig"`
+	ImagePullSecrets    []corev1.LocalObjectReference `yaml:"imagePullSecrets"`
+}
+```
 
+Now then, let's see how injection data is rendered.
+
+1. The first step is to render the istio-sidecar-injector configmap into a template instance using
+`podSpec` and `meshConfig`, for example in the configmap `--concurrency` field is defined as:
+
+```yaml
+  containers:
+  - name: istio-proxy
+    args:
+    - proxy
+    - sidecar
+    ......
+    [[ if gt .ProxyConfig.Concurrency 0 -]]
+    - --concurrency
+    - [[ .ProxyConfig.Concurrency ]]
+    [[ end -]]
+```
+
+if `concurrency` field is set greater than 0, `--concurrency` will be set, or else, it is not given,
+for example if `defaultConfig.concurrency: 2` is appeared in `meshConfig`, it is rendered as: 
+
+```yaml
+  containers:
+  - name: istio-proxy
+    args:
+    - proxy
+    - sidecar
+    ......
+    - --concurrency
+    - 2
+```
+
+The implementation leveraging golang's template module, the code snippet is as below:
+
+```gotemplate
+    // configurations for rendering the istio-sidecar-injector configmap
+	data := SidecarTemplateData{
+		DeploymentMeta: deploymentMetadata,
+		ObjectMeta:     metadata,
+		Spec:           spec,
+		ProxyConfig:    proxyConfig,
+		MeshConfig:     meshConfig,
+	}
+    // functions used in template, for example 'annotation' function is used to set docker image
+    // containers:
+    // - name: istio-proxy
+    //   image: [[ annotation .ObjectMeta `sidecar.istio.io/proxyImage`  "gcr.io/istio-release/proxyv2:release-1.1-latest-daily"  ]]
+	funcMap := template.FuncMap{
+		"formatDuration":      formatDuration,
+		"isset":               isset,
+		"excludeInboundPort":  excludeInboundPort,
+		"includeInboundPorts": includeInboundPorts,
+		"kubevirtInterfaces":  kubevirtInterfaces,
+		"applicationPorts":    applicationPorts,
+		"annotation":          annotation,
+		"valueOrDefault":      valueOrDefault,
+		"toJSON":              toJSON,
+		"toJson":              toJSON, // Used by, e.g. Istio 1.0.5 template sidecar-injector-configmap.yaml
+		"fromJSON":            fromJSON,
+		"toYaml":              toYaml,
+		"indent":              indent,
+		"directory":           directory,
+	}
+
+	var tmpl bytes.Buffer
+	temp := template.New("inject").Delims(sidecarTemplateDelimBegin, sidecarTemplateDelimEnd)
+	t, err := temp.Funcs(funcMap).Parse(sidecarTemplate)
+	if err != nil {
+		log.Infof("Failed to parse template: %v %v\n", err, sidecarTemplate)
+		return nil, "", err
+	}
+	if err := t.Execute(&tmpl, &data); err != nil {
+		log.Infof("Invalid template: %v %v\n", err, sidecarTemplate)
+		return nil, "", err
+	}
+```
+
+2. Secondly, set concurrency of sidecar container, the workflow is already shown very clearly in
+   function `applyConcurrency`.
+
+```gotemplate
+// applyConcurrency changes sidecar containers' concurrency to equals the cpu cores of the container
+// if not set. It is inferred from the container's resource limit or request.
+func applyConcurrency(containers []corev1.Container) {
+	for i, c := range containers {
+		if c.Name == ProxyContainerName {
+			concurrency := extractConcurrency(&c)
+			// do not change it when it is already set
+			if concurrency > 0 {
+				return
+			}
+
+			// firstly use cpu limits
+			if !updateConcurrency(&containers[i], c.Resources.Limits.Cpu().MilliValue()) {
+				// secondly use cpu requests
+				updateConcurrency(&containers[i], c.Resources.Requests.Cpu().MilliValue())
+			}
+			return
+		}
+	}
+}
+```
+
+In summary, the priority is:
+
+```
+    concurrency is not set -> container.Resources.Limits.Cpu is not set -> container.Resources.Requests.Cpu 
+``` 
+
+3. Finally, keep the rest things of `SidecarInjectionSpec` instance as it is, and compose
+   "sidecar.istio.io/status" annotation:
+
+```gotemplate
+	status := &SidecarInjectionStatus{Version: version}
+	for _, c := range sic.InitContainers {
+		status.InitContainers = append(status.InitContainers, c.Name)
+	}
+	for _, c := range sic.Containers {
+		status.Containers = append(status.Containers, c.Name)
+	}
+	for _, c := range sic.Volumes {
+		status.Volumes = append(status.Volumes, c.Name)
+	}
+	for _, c := range sic.ImagePullSecrets {
+		status.ImagePullSecrets = append(status.ImagePullSecrets, c.Name)
+	}
+	statusAnnotationValue, err := json.Marshal(status)
+	if err != nil {
+		return nil, "", fmt.Errorf("error encoded injection status: %v", err)
+	}
+```
+
+### patch podSpec
+
+the following things are included in the step.
+
+- remove any things previously injected by kube-inject
+
+```gotemplate
+	// Remove any containers previously injected by kube-inject using
+	// container and volume name as unique key for removal.
+	patch = append(patch, removeContainers(pod.Spec.InitContainers, prevStatus.InitContainers, "/spec/initContainers")...)
+	patch = append(patch, removeContainers(pod.Spec.Containers, prevStatus.Containers, "/spec/containers")...)
+	patch = append(patch, removeVolumes(pod.Spec.Volumes, prevStatus.Volumes, "/spec/volumes")...)
+	patch = append(patch, removeImagePullSecrets(pod.Spec.ImagePullSecrets, prevStatus.ImagePullSecrets, "/spec/imagePullSecrets")...)
+```
+
+- rewrite probes if `rewriteAppHTTPProbe` is set to `true` in istio sidecar-injector configmap, and
+  the `livenessProbe` and/or `readinessProbe` is set in the original podSpec.
+  For example, the original probe settings is shown below
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: example
+spec:
+  template:
+    spec:
+      containers:
+      - name: example
+        livenessProbe:
+          httpGet:
+            path: /env/version
+            port: 8999
+          initialDelaySeconds: 4
+          periodSeconds: 4
+        readinessProbe:
+          httpGet:
+            path: /env/version
+            port: 8999
+          initialDelaySeconds: 5
+          periodSeconds: 5
+```
+  if `rewriteAppHTTPProbe: true` is set, after injection, the probes will be rewritten to follow.
+  Notice that, the path of livenessProbe and readinessProbe is different.
+
+```yaml
+  - env:
+    - name: version
+      value: v1
+    name: example
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /app-health/example/livez
+        port: 15020
+        scheme: HTTP
+      initialDelaySeconds: 4
+      periodSeconds: 4
+      successThreshold: 1
+      timeoutSeconds: 1
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /app-health/example/readyz
+        port: 15020
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 1
+```
+- patch podSpec with [injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#get-injection-data>).
+
+```gotemplate
+	patch = append(patch, addContainer(pod.Spec.InitContainers, sic.InitContainers, "/spec/initContainers")...)
+	patch = append(patch, addContainer(pod.Spec.Containers, sic.Containers, "/spec/containers")...)
+	patch = append(patch, addVolume(pod.Spec.Volumes, sic.Volumes, "/spec/volumes")...)
+	patch = append(patch, addImagePullSecrets(pod.Spec.ImagePullSecrets, sic.ImagePullSecrets, "/spec/imagePullSecrets")...)
+```
+
+- add DNSConfig if it is configured in istio-sidecar-injector configmap, like:
+
+```yaml
+{{- if .Values.global.podDNSSearchNamespaces }}
+      dnsConfig:
+        searches:
+          {{- range .Values.global.podDNSSearchNamespaces }}
+          - {{ . }}
+          {{- end }}
+{{- end }}
+```
+
+```gotemplate
+	if sic.DNSConfig != nil {
+		patch = append(patch, addPodDNSConfig(sic.DNSConfig, "/spec/dnsConfig")...)
+	}
+```
+
+- add securityContext, if it is given in podSpec
+
+```gotemplate
+	if pod.Spec.SecurityContext != nil {
+		patch = append(patch, addSecurityContext(pod.Spec.SecurityContext, "/spec/securityContext")...)
+	}
+```
+
+- add or update "sidecar.istio.io/status" annotation to be like:
+ 
+```yaml
+ annotations:
+   "sidecar.istio.io/status: '{"version":"6ca0d185f760e05bb8358127f2dd82304993c0d93edfb8609f7e397a18b14128","initContainers":["istio-init"],"containers":["istio-proxy"],"volumes":["istio-envoy","istio-certs"],"imagePullSecrets":null}'"
+```
