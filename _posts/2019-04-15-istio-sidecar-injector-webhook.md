@@ -771,7 +771,6 @@ In summary, the priority is:
 the following things are included in the step.
 
 - remove any things previously injected by kube-inject
-
 ```gotemplate
 	// Remove any containers previously injected by kube-inject using
 	// container and volume name as unique key for removal.
@@ -784,7 +783,6 @@ the following things are included in the step.
 - rewrite probes if `rewriteAppHTTPProbe` is set to `true` in istio sidecar-injector configmap, and
   the `livenessProbe` and/or `readinessProbe` is set in the original podSpec.
   For example, the original probe settings is shown below
-
 ```yaml
 apiVersion: extensions/v1beta1
 kind: Deployment
@@ -808,6 +806,7 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
 ```
+
   if `rewriteAppHTTPProbe: true` is set, after injection, the probes will be rewritten to follow.
   Notice that, the path of livenessProbe and readinessProbe is different.
 
@@ -838,7 +837,6 @@ spec:
       timeoutSeconds: 1
 ```
 - patch podSpec with [injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#get-injection-data>).
-
 ```gotemplate
 	patch = append(patch, addContainer(pod.Spec.InitContainers, sic.InitContainers, "/spec/initContainers")...)
 	patch = append(patch, addContainer(pod.Spec.Containers, sic.Containers, "/spec/containers")...)
@@ -847,7 +845,6 @@ spec:
 ```
 
 - add DNSConfig if it is configured in istio-sidecar-injector configmap, like:
-
 ```yaml
 {{- if .Values.global.podDNSSearchNamespaces }}
       dnsConfig:
@@ -865,7 +862,6 @@ spec:
 ```
 
 - add securityContext, if it is given in podSpec
-
 ```gotemplate
 	if pod.Spec.SecurityContext != nil {
 		patch = append(patch, addSecurityContext(pod.Spec.SecurityContext, "/spec/securityContext")...)
@@ -873,7 +869,6 @@ spec:
 ```
 
 - add or update "sidecar.istio.io/status" annotation to be like:
- 
 ```yaml
  annotations:
    "sidecar.istio.io/status: '{"version":"6ca0d185f760e05bb8358127f2dd82304993c0d93edfb8609f7e397a18b14128","initContainers":["istio-init"],"containers":["istio-proxy"],"volumes":["istio-envoy","istio-certs"],"imagePullSecrets":null}'"
