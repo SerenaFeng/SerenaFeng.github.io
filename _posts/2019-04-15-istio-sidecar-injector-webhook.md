@@ -305,7 +305,7 @@ three processes:
   command.
 - update configuration based on the change of the four configuration files, to prevent frequent
   change of configuration files, a debounce timer is employed. 
-
+  
 ```gotemplate
 func (wh *Webhook) Run(stop <-chan struct{}) {
     // start webhook server
