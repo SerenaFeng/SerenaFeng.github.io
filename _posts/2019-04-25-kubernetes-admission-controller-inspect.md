@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "Kubernetes Admission Controller Profile"
+title: "Kubernetes Admission Controller Inspect"
 subtitle: 'How Admission Controller works in Kubernetes'
 author: 'serena'
 head-style: text
@@ -12,6 +12,6 @@ tags:
   - apimachinary
 ---
 
-summary: in this article, we will inspect how Kubernetes handle admission controller events, and
-         take the istio-sidecar-injector MutatingAdmissionWebhook as an example, we will explain
+summary: in this article, we will inspect how admission controller events are handled by Kubernetes,
+         and take the istio-sidecar-injector MutatingAdmissionWebhook as an example, we will explain
          how admission controller is implemented with the help of client-go and apimachinay.

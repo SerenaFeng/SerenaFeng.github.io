@@ -1,7 +1,7 @@
 ---
 layout: post
-title: "istio-sidecar-injector-webhook analysis"
-subtitle: 'How istio sidecar injector works'
+title: "Istio sidecar-injector-webhook Inspect"
+subtitle: 'How sidecar-injector-webhook works in Istio'
 author: 'serena'
 head-style: text
 tags: 
