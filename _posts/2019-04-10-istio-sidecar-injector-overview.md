@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "Istio sidecar injector"
+title: "Istio sidecar-injector overview"
 subtitle: 'How to inject sidecar containers in Istio'
 author: 'serena'
 head-style: text

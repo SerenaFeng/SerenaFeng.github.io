@@ -10,7 +10,7 @@ tags:
   - sidecar injector
 ---
 
-As mentioned in the [previous blog](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector/>),
+As mentioned in the [previous blog](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector-overview/>),
 Istio leverage the [MutatingAdmissionWebhook](<https://kubernetes.io/docs/admin/admission-controllers/>)
 to implement automatic sidecar injection. In this article, we will introduce how the automatic
 injection works through understanding the source code of istio-sidecar-injector webhook.
@@ -96,9 +96,9 @@ items:
 ```
 
 As shown in the yaml specs, `meshConfig` is indicated as flag `meshConfig`, and it is a mounted
-volume of [configmap `istio`](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector/#istio-configmap>),
+volume of [configmap `istio`](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector-overview/#istio-configmap>),
 while `injectConfigFile` is defined as flag `injectConfig`, and it is a volume of 
-[`istio-sidecar-injector`](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector/#istio-sidecar-injector-configmap>).
+[`istio-sidecar-injector`](<https://serenafeng.github.io/2019/04/10/istio-sidecar-injector-overview/#istio-sidecar-injector-configmap>).
 
 ### Webhook struct
 
@@ -301,7 +301,7 @@ finally, implementing webhook server leveraging goroutine of `webserver.Run`. Ba
 three processes:
 - start the webhook server, listen and process '/inject' event.
 - periodically update `healthCheckFile`, to indicate webhook server is going on healthily. Typically,
-  it is used in [probe](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#healthiness-detection>)
+  it is used in [probe](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook-inspect/#healthiness-detection>)
   command.
 - update configuration based on the change of the four configuration files, to prevent frequent
   change of configuration files, a debounce timer is employed. 
@@ -426,13 +426,13 @@ function is `webhook.inject`.
 
 The workflow mainly includes 3 steps:
 
-- [inject or not](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#inject-or-not>).
+- [inject or not](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook-inspect/#inject-or-not>).
   according to `sidecar.istio.io/inject` annotation, `neverInjectSelector`, 
   `alwaysInjectSelector` and `policy` settings, determine whether injection is required or not
-- [get injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#get-injection-data>).
+- [get injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook-inspect/#get-injection-data>).
   based on `meshConfig` and `podSpec` to render out a instance of
   `istio-sidecar-injector` configmap as the injection data.
-- [patch podSpec](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#patch-podspec>).
+- [patch podSpec](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook-inspect/#patch-podspec>).
   using the injection data out on the previous step, to patch the podSpec, adding
   istio sidecar related configurations, such as add or change annotations["sidecar.istio.io/status"],
   add `istio-init` initContainer, `istio-proxy` container. 
@@ -836,7 +836,7 @@ spec:
       successThreshold: 1
       timeoutSeconds: 1
 ```
-- patch podSpec with [injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook/#get-injection-data>).
+- patch podSpec with [injection data](<https://serenafeng.github.io/2019/04/15/istio-sidecar-injector-webhook-inspect/#get-injection-data>).
 ```gotemplate
 	patch = append(patch, addContainer(pod.Spec.InitContainers, sic.InitContainers, "/spec/initContainers")...)
 	patch = append(patch, addContainer(pod.Spec.Containers, sic.Containers, "/spec/containers")...)
