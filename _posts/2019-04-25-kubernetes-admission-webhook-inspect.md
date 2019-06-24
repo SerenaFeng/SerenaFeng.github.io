@@ -111,8 +111,6 @@ type Webhook struct {
 
 ## XXXAdmissionWebhook 
 
-`To be precised`
-
 XXXAdmissionWebhook is a plugin-style admission controller that can be configured into
 the apiserver. The XXXAdmissionWebhook plugin get the list of interested admission webhooks from
 XXXWebhookConfiguration. Then the XXXAdmissionWebhook controller observes the requests to apiserver
@@ -230,20 +228,15 @@ type AdmissionResponse struct {
 }
 ```
 
-# Creating and deploying an admission webhook
+# Create and deploy admission webhook
 
 Since we have covered the basic theory, let's try out the admission webhooks in a real
 cluster. In this example we will create a mutating and a validating webhook servers, 
 deploy them on a cluster, then create and deploy the corresponding webhook configurations
 to see if they work as expected.
 
-When a pod creation is required, for the mutating webhook, if 'version' environment variable of it
-is 'v1', the "webhook.example.com/allow: false" annotation will be patched, or else the 
-"webhook.example.com/allow: true" is added. While in the validating webhook, if
-"webhook.example.com/allow: true" annotation meets, the pod creation is accepted, otherwise rejected.
-
-[Our project](<https://github.com/SerenaFeng/k8s-webhook-example>) reference Istio
-sidecar-injector-webhook a lot.
+[Our project](<https://github.com/SerenaFeng/k8s-webhook-example>) mainly reference Istio
+sidecar-injector-webhook.
 
 ## Prerequisite
 
@@ -431,26 +424,25 @@ Because we’ve signed our certificates with the Kubernetes API, we can use the 
 $ CABundle=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}')
 ```
 
-ToDo: More information about the caBundle.
+## Define XXXWebhookConfiguration
 
-## Define the MutatingWebhookConfiguration
+The configuration is like below:
 
 ```yaml
 apiVersion: admissionregistration.k8s.io/v1beta1
-kind: MutatingWebhookConfiguration
+kind: Validating/MutatingWebhookConfiguration
 metadata:
-  name: mutateexample
-  namespace: webhook
+  name: {{ template "webhook.name" . }}
   labels:
-    app: mutateexample
+    app: {{ template "webhook.name" . }}
 webhooks:
-  - name: mutateexample.webhook.svc
+  - name: {{ template "webhook.name" . }}.webhook.svc
     clientConfig:
       service:
-        name: mutateexample
-        namespace: webhook
-        path: "/mutate"
-      caBundle: ${caBundle}
+        name: {{ template "webhook.name" . }}
+        namespace: {{ .Release.Namespace }}
+        path: {{ .Values.path | quote }}
+      caBundle: {{ .Values.global.caBundle }}
     rules:
       - operations: [ "CREATE" ]
         apiGroups: [""]
@@ -462,36 +454,29 @@ webhooks:
         webhook-example: enabled
 ```
 
-## Define the ValidatingWebhookConfiguration
+# Try it out
 
-```yaml
-apiVersion: admissionregistration.k8s.io/v1beta1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: validateexample
-  namespace: webhook
-  labels:
-    app: validateexample
-webhooks:
-  - name: validateexample.webhook.svc
-    clientConfig:
-      service:
-        name: validateexample
-        namespace: webhook
-        path: "/validate"
-      caBundle: ${caBundle}
-    rules:
-      - operations: [ "CREATE" ]
-        apiGroups: [""]
-        apiVersions: ["v1"]
-        resources: ["pods"]
-    failurePolicy: Fail
-    namespaceSelector:
-      matchLabels:
-        webhook-example: enabled
+In our project, we create
+[a helm chart](<https://github.com/SerenaFeng/k8s-webhook-example/tree/master/install/helm/we>)
+to do the deployment.
+
+And in the [samples](<https://github.com/SerenaFeng/k8s-webhook-example/tree/master/samples>)
+directory, two pod deployments are given, 'deny-pod.yaml' is used to try the pod is not created
+because of its 'version' is 'v1', and 'accept-pod.yaml' will be successfully deployed, and patched
+with "webhook.example.com/allow: true"
+
+The step shown as:
+
+```bash
+$ helm install --namespace <ns-webhook> \
+               --name ${1} \
+               --set global.caBundle=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}') \
+               ./install/helm/we
+$ kubectl create namespace <ns-consumer>
+$ kubectl label <ns-consumer> webhook-example=enabled
+$ kubectl -n <ns-consumer> apply ./sample/deny-pod.yaml
+$ kubectl -n <ns-consumer> apply ./sample/accept-pod.yaml
 ```
-
-
 
 # References
 
