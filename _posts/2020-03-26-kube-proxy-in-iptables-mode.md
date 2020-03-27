@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Deep Dive: kube-proxy works in iptables mode
+title: Deep Dive kube-proxy works in iptables mode
 author: serena
 head-style: text
 tags: 
@@ -107,9 +107,8 @@ and NAT between pods and services when a Service or Endpoint object is created.
   chain programed, the packet is dropped if a node has no relevant endpoints 
   retained.
   
-  
-  
-  
+
+
   
   
 # References
