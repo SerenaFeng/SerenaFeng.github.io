@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Deep Dive kube-proxy works in iptables mode
+title: Deep Dive kube-proxy with iptables mode
 author: serena
 head-style: text
 tags: 
