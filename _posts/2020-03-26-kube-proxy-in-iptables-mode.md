@@ -105,7 +105,11 @@ and NAT between pods and services when a Service or Endpoint object is created.
 - `KUBE-XLB-*` chain works while externalTrafficPolicy is set to Local. With this
   chain programed, the packet is dropped if a node has no relevant endpoints 
   retained.
-  
+
+# [Workflow of kube-proxy iptables](https://docs.google.com/drawings/d/1MtWL8qRTs6PlnJrW4dh8135_S9e2SaawT410bJuoBPk)
+
+![](/img/posts/kube-proxy/kube-proxy_iptables.png)
+
 # Practices
 
 Now that we have the basic concept of kube-proxy in mind, let's explain them in 
@@ -324,7 +328,6 @@ remains it is.
 bash-5.0# curl -s 10.101.220.97:8711 | grep client
 client_address=10.244.193.194
 ```
-
 
 __KUBE-SVC-*__
 
@@ -745,8 +748,7 @@ client_address=192.168.11.1
 
 # Further inspect:
 
-1. ClusterIP with external ip
-
+1. ClusterIP with external ip(physdev module of iptables deep dive)
 
 # References
 ip a
