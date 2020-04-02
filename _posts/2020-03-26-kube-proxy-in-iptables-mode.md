@@ -170,9 +170,17 @@ serena@ubuntu:~$ virsh list
 
 serena@ubuntu:~$ kubectl get po -l app=echo -o wide
 NAME                    READY   STATUS    RESTARTS   AGE    IP               NODE       NOMINATED NODE   READINESS GATES
+debug                   1/1     Running   0          10h    10.244.193.194   minion02   <none>           <none>
 echo-75548f949f-6hg97   1/1     Running   0          100s   10.244.122.1     minion03   <none>           <none>
 echo-75548f949f-7r575   1/1     Running   0          100s   10.244.50.68     minion01   <none>           <none>
 echo-75548f949f-h5h6w   1/1     Running   0          100s   10.244.193.193   minion02   <none>           <none>
+
+serena@ubuntu:~$ kubectl get node -o wide
+NAME       STATUS   ROLES    AGE   VERSION   INTERNAL-IP    EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+master01   Ready    master   23h   v1.17.3   192.168.11.2   <none>        Ubuntu 18.04.4 LTS   4.15.0-88-generic   docker://18.9.7
+minion01   Ready    <none>   22h   v1.17.3   192.168.11.3   <none>        Ubuntu 18.04.4 LTS   4.15.0-88-generic   docker://18.9.7
+minion02   Ready    <none>   22h   v1.17.3   192.168.11.4   <none>        Ubuntu 18.04.4 LTS   4.15.0-88-generic   docker://18.9.7
+minion03   Ready    <none>   22h   v1.17.3   192.168.11.5   <none>        Ubuntu 18.04.4 LTS   4.15.0-88-generic   docker://18.9.7
 ```
 
 ## ClusterIP
@@ -298,6 +306,26 @@ destination IP 10.104.16.232 and port 6711), will be processed by two rules:
      going through chain KUBE-MARK-MASQ
   2) then, the packet flows into chain KUBE-SVC-U52O5CQH2XXNVZ54
 
+From below we can see, when accessing the service externally(not from pods), the source 
+IP is replaced with nodeIP; 
+
+```bash
+cactus@master01:~$ curl --interface 192.168.11.2 -s 10.101.220.97:8711 | grep client
+client_address=10.244.241.64
+
+cactus@master01:~$ sudo conntrack -L -d 10.101.220.97
+tcp      6 117 TIME_WAIT src=192.168.11.2 dst=10.101.220.97 sport=47153 dport=8711 src=10.244.122.1 dst=10.244.241.64 sport=8080 dport=24678 [ASSURED] mark=0 use=1
+```
+
+when the packet comes from the internal pod--the 'debug' pod, the source IP
+remains it is. 
+
+```bash
+bash-5.0# curl -s 10.101.220.97:8711 | grep client
+client_address=10.244.193.194
+```
+
+
 __KUBE-SVC-*__
 
 In the chain KUBE-SVC-U52O5CQH2XXNVZ54, the load balancing between pods is performed 
@@ -310,6 +338,7 @@ Each KUBE-SEP-* chain represents a pod or endpoint respectively. It includes two
 
   1) packet escaping from the pod is source NAT-ed with host's docker0 IP.
   2) packet coming into the pod is DNAT-ed with pod's ip, then routes to the backend pod.
+
 
 ### session affinity service
 
@@ -549,8 +578,170 @@ bash-5.0# dig echo-headless +search +short
 
 ## NodePort
 
+Kubernetes exposes service with nodeIP:nodePort by deploying NodePort type service,
+by doing so, kubernetes creates a ClusterIP service, to which the NodePort service will
+route, and meanwhile opens a specific port(node port) on all the Nodes, and any 
+traffic that is sent to this port is forwarded to destination pod.
 
+In the following subsection, we will discuss 2 types of NodePort service:
 
+- default service(externalTrafficPolicy: Cluster)
+- externalTrafficPolicy: Local
+
+## default NodePort service
+
+A NodePort service with no customization would create an `externalTrafficPolicy: Cluster`
+type service. The manifest is written in below:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-np
+spec:
+  type: NodePort
+  ports:
+  - port: 8711
+    targetPort: 8080
+  selector:
+    app: echo
+```
+
+The service and endpoints are created:
+
+```bash
+serena@ubuntu:~$ kubectl get svc echo-np
+NAME      TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+echo-np   NodePort   10.107.142.56   <none>        8711:30398/TCP   84s
+serena@ubuntu:~$ kubectl get ep echo-np
+NAME      ENDPOINTS                                                 AGE
+echo-np   10.244.122.1:8080,10.244.193.193:8080,10.244.50.68:8080   88s
+```
+
+As we can see from the above, the port 30398 is assigned to the service 'echo-np'.
+On each node, kube-proxy allocating a listening port for it:
+
+```bash
+cactus@master01:~$ sudo netstat -alnp | grep 30398
+tcp6       0      0 :::30398                :::*                    LISTEN      4406/kube-proxy     
+
+cactus@master01:~$ ps -p 4406 -o args
+COMMAND
+/usr/local/bin/kube-proxy --config=/var/lib/kube-proxy/config.conf --hostname-override=master01
+```
+
+From iptables' perspective, each two sets of chains & rules are added to the chain
+KUBE-SERVICES & KUBE-NODEPORTS separately:
+
+```bash
+cactus@master01:~$ sudo iptables -t nat -L KUBE-SERVICES | grep echo-np
+KUBE-MARK-MASQ  tcp  -- !10.244.0.0/16        10.107.142.56        /* default/echo-np: cluster IP */ tcp dpt:8711
+KUBE-SVC-2JCTU37Y3EPLWMDU  tcp  --  anywhere             10.107.142.56        /* default/echo-np: cluster IP */ tcp dpt:8711
+
+cactus@master01:~$ sudo iptables -t nat -L KUBE-NODEPORTS
+Chain KUBE-NODEPORTS (1 references)
+target     prot opt source               destination         
+KUBE-MARK-MASQ  tcp  --  anywhere             anywhere             /* default/echo-np: */ tcp dpt:30398
+KUBE-SVC-2JCTU37Y3EPLWMDU  tcp  --  anywhere             anywhere             /* default/echo-np: */ tcp dpt:30398
+```
+
+Regarding KUBE-SERVICES chain, it is used for the cluster ip accessing, for detailed
+information, please reference 'normal ClusterIP service'.
+
+KUBE-NODEPORTS denotes that all packets accessing port 30398, firstly is SNAT-ed, then
+goes into KUBE-SVC chain for load balancing to select a pod to route to.
+
+### externalTrafficPolicy: Local
+
+Using "externalTrafficPolicy: Local" will preserve source IP and drop packets from node 
+has no local endpoint. It is defined as:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-local
+spec:
+  ports:
+  - port: 8711
+    targetPort: 8080
+  selector:
+    app: echo
+  type: NodePort
+  externalTrafficPolicy: Local
+```
+
+service and endpoints created:
+
+```bash
+serena@ubuntu:~$ kubectl get svc echo-local
+NAME         TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+echo-local   NodePort   10.103.249.21   <none>        8711:30757/TCP   45s
+
+serena@ubuntu:~$ kubectl get ep echo-local
+NAME         ENDPOINTS                                                 AGE
+echo-local   10.244.122.1:8080,10.244.193.193:8080,10.244.50.68:8080   53s
+```
+
+The chain of KUBE-NODEPORTS is different between the nodes have local endpoints and 
+those haven't. in our cluster, 'echo' pod is not scheduled on master01 node, so
+when we trying to access the service by master01's nodeIP, the packet will be dropped
+by the rule '-A KUBE-XLB-WVR3FY6OQL4XX3DZ -m comment --comment "default/echo-local: 
+has no local endpoints" -j KUBE-MARK-DROP'. On the contrary, when accessing the
+service by minion01's nodeIP, it will be forwarded to pod 'echo-75548f949f-7r575'(which
+is scheduled on minion01 node) directly, by rule '-A KUBE-XLB-WVR3FY6OQL4XX3DZ -m comment 
+--comment "Balancing rule 0 for default/echo-local:" -j KUBE-SEP-FO5ZQ232FWC5GK4A'
+
+The chains and rules on the pod-owned nodes is look like:
+
+```bash
+cactus@ubuntu:~$ sudo iptables -t nat -L KUBE-NODEPORTS
+Chain KUBE-NODEPORTS (1 references)
+target     prot opt source               destination         
+KUBE-MARK-MASQ  tcp  --  anywhere             anywhere             /* default/echo-np: */ tcp dpt:30398
+KUBE-SVC-2JCTU37Y3EPLWMDU  tcp  --  anywhere             anywhere             /* default/echo-np: */ tcp dpt:30398
+KUBE-MARK-MASQ  tcp  --  localhost/8          anywhere             /* default/echo-local: */ tcp dpt:30757
+KUBE-XLB-WVR3FY6OQL4XX3DZ  tcp  --  anywhere             anywhere             /* default/echo-local: */ tcp dpt:30757
+
+cactus@ubuntu:~$ sudo iptables -t nat -L KUBE-XLB-WVR3FY6OQL4XX3DZ
+Chain KUBE-XLB-WVR3FY6OQL4XX3DZ (1 references)
+target     prot opt source               destination         
+KUBE-SVC-WVR3FY6OQL4XX3DZ  all  --  10.244.0.0/16        anywhere             /* Redirect pods trying to reach external loadbalancer VIP to clusterIP */
+KUBE-MARK-MASQ  all  --  anywhere             anywhere             /* masquerade LOCAL traffic for default/echo-local: LB IP */ ADDRTYPE match src-type LOCAL
+KUBE-SVC-WVR3FY6OQL4XX3DZ  all  --  anywhere             anywhere             /* route LOCAL traffic for default/echo-local: LB IP to service chain */ ADDRTYPE match src-type LOCAL
+KUBE-SEP-FO5ZQ232FWC5GK4A  all  --  anywhere             anywhere             /* Balancing rule 0 for default/echo-local: */
+```
+
+No pod retained nodes:
+
+```bash
+cactus@master01:~$ sudo iptables -t nat -L KUBE-NODEPORTS
+Chain KUBE-NODEPORTS (1 references)
+target     prot opt source               destination         
+KUBE-MARK-MASQ  tcp  --  anywhere             anywhere             /* default/echo-np: */ tcp dpt:30398
+KUBE-SVC-2JCTU37Y3EPLWMDU  tcp  --  anywhere             anywhere             /* default/echo-np: */ tcp dpt:30398
+KUBE-MARK-MASQ  tcp  --  localhost/8          anywhere             /* default/echo-local: */ tcp dpt:30757
+KUBE-XLB-WVR3FY6OQL4XX3DZ  tcp  --  anywhere             anywhere             /* default/echo-local: */ tcp dpt:30757
+
+cactus@master01:~$ sudo iptables -t nat -L KUBE-XLB-WVR3FY6OQL4XX3DZ
+Chain KUBE-XLB-WVR3FY6OQL4XX3DZ (1 references)
+target     prot opt source               destination         
+KUBE-SVC-WVR3FY6OQL4XX3DZ  all  --  10.244.0.0/16        anywhere             /* Redirect pods trying to reach external loadbalancer VIP to clusterIP */
+KUBE-MARK-MASQ  all  --  anywhere             anywhere             /* masquerade LOCAL traffic for default/echo-local: LB IP */ ADDRTYPE match src-type LOCAL
+KUBE-SVC-WVR3FY6OQL4XX3DZ  all  --  anywhere             anywhere             /* route LOCAL traffic for default/echo-local: LB IP to service chain */ ADDRTYPE match src-type LOCAL
+KUBE-MARK-DROP  all  --  anywhere             anywhere             /* default/echo-local: has no local endpoints */
+```
+
+Accessing from master01's node IP is forbiddened, but not for minion01. And from
+minion01's response we can see source IP is not SNAT-ed by nodeIP.
+
+```bash
+serena@ubuntu:~$ wget -qO - 192.168.11.2:30757 | grep client
+^C
+
+serena@ubuntu:~$ wget -qO - 192.168.11.3:30757 | grep client
+client_address=192.168.11.1
+```
 
 # Further inspect:
 
@@ -561,5 +752,5 @@ bash-5.0# dig echo-headless +search +short
 ip a
 [1] https://medium.com/pablo-perez/k8s-externaltrafficpolicy-local-or-cluster-40b259a19404
 [2] https://www.asykim.com/blog/deep-dive-into-kubernetes-external-traffic-policies
-[3] 
+[3] https://msazure.club/kubernetes-services-and-iptables/
 
