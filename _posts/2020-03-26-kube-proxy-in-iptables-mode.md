@@ -586,6 +586,22 @@ by doing so, kubernetes creates a ClusterIP service, to which the NodePort servi
 route, and meanwhile opens a specific port(node port) on all the Nodes, and any 
 traffic that is sent to this port is forwarded to destination pod.
 
+The entry point of iptables rules for performing NodePort trafficing is '-A KUBE-SERVICES 
+-m comment --comment "kubernetes service nodeports; NOTE: this must be the last rule in 
+this chain" -m addrtype --dst-type LOCAL -j KUBE-NODEPORTS', this rule is the last one 
+in KUBE-SERVICES chain, it indicates that if a visiting packet is not matched by any of 
+the anterior rules, it is forwarded into KUBE-NODEPORTS chain for further processing.
+
+```bash
+cactus@master01:~$ sudo iptables -t nat -L KUBE-SERVICES
+Chain KUBE-SERVICES (2 references)
+target     prot opt source               destination         
+.
+.
+.
+KUBE-NODEPORTS  all  --  anywhere             anywhere             /* kubernetes service nodeports; NOTE: this must be the last rule in this chain */ ADDRTYPE match dst-type LOCAL
+```
+
 In the following subsection, we will discuss 2 types of NodePort service:
 
 - default service(externalTrafficPolicy: Cluster)
