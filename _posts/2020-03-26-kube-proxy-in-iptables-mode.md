@@ -768,7 +768,6 @@ client_address=192.168.11.1
 
 # References
 
-[2] https://www.asykim.com/blog/deep-dive-into-kubernetes-external-traffic-policies
-
-[3] https://msazure.club/kubernetes-services-and-iptables/
+- [A Deep Dive into Kubernetes External Traffic Policies](https://www.asykim.com/blog/deep-dive-into-kubernetes-external-traffic-policies)
+- [Kubernetes Services and Iptables](https://msazure.club/kubernetes-services-and-iptables/)
 
