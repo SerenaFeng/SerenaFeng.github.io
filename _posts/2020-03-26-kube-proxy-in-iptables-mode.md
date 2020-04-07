@@ -767,8 +767,8 @@ client_address=192.168.11.1
 1. ClusterIP with external ip(physdev module of iptables deep dive)
 
 # References
-ip a
-[1] https://medium.com/pablo-perez/k8s-externaltrafficpolicy-local-or-cluster-40b259a19404
+
 [2] https://www.asykim.com/blog/deep-dive-into-kubernetes-external-traffic-policies
+
 [3] https://msazure.club/kubernetes-services-and-iptables/
 
