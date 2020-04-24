@@ -269,6 +269,12 @@ To make service's cluster IP accessible from external network as well as from po
 network, kube-proxy creates several chains and rules. 
 
 ```bash
+cactus@master01:~$ sudo iptables -t nat -S | grep KUBE-SERVICES
+-N KUBE-SERVICES
+-A PREROUTING -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+-A OUTPUT -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+...
+
 cactus@master01:~$ sudo iptables -t nat -L KUBE-SERVICES | grep echo
 Chain KUBE-SERVICES (2 references)
 target                     prot  opt  source          destination         
@@ -303,11 +309,14 @@ DNAT       tcp  --  anywhere             anywhere             tcp to:10.244.50.6
 
 __KUBE-SERVICES__
 
-Starting from chain KUBE-SERVICES, all inbound traffics to service echo(matched by
-destination IP 10.104.16.232 and port 6711), will be processed by two rules:
+From the chains of PREROUTING and OUTPUT we can see, all data packets incoming or
+outgoing of Pods enters the chain KUBE-SERVICES as the starting point, in this case,
+all inbound traffics come into service echo(matched by
+destination IP 10.104.16.232 and port 6711), will be processed by two rules in ordinal:
 
   1) the source IP of the packet not comes from pod is substituted with node IP when 
      going through chain KUBE-MARK-MASQ
+
   2) then, the packet flows into chain KUBE-SVC-U52O5CQH2XXNVZ54
 
 From below we can see, when accessing the service externally(not from pods), the source 
