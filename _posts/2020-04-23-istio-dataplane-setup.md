@@ -10,15 +10,16 @@ tags:
 ---
 
 summary: in the post, we will profile how data plane is setup when Istio works
-         as pure Istio and with CNI plugin. Concerning pure Istio, a istio-init
-         is injected to application Pod as initContainer and configuring the 
-         traffic redirecting rules for proxy container, while for CNI plugin mode, 
-         a component of istio-cni-node deamonset is leveraged for the setup work.
+         both in simple Istio and CNI plugin mode. Concerning simple Istio, a 
+         istio-init is injected into application Pod as initContainer and 
+         configuring the traffic redirecting rules under the network namespace
+         of the application pod. While for CNI plugin mode, istio-cni-node 
+         component is leveraged for the setup work.
 
 # tools
 
-For the reason that istio-init container is exited when completed, and proxy
-container may not have the permission to execute the `netstat` and `iptables`
+For the reason that initContainer is exited when completed, and other containers
+may not have the permission to execute the `netstat` or `iptables`
 command, so we use `nsenter` to show our configurations.
 
 From the command `netstat`, we can see envoy listens on the following ports:
