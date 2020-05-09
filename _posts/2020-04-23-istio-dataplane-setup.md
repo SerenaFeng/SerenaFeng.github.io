@@ -41,12 +41,29 @@ tcp6       0      0 10.244.241.67:15020     192.168.1.2:45336       TIME_WAIT   
 ...
 ```
 
-# Pure Istio Mode
+# Simple Istio Mode
 
-## Versions Before 1.5
+Iptables rules are setup by running script
+[istio-iptables.sh](<https://github.com/istio/istio/blob/release-1.4/tools/packaging/common/istio-iptables.sh>)
+in initContainer 'istio-init', to be able to configure iptables, istio-init 
+must be running under root and 'NET-ADMIN' privilege.
 
-In the previous version of v1.5, iptables rules are setup using script
-[istio-iptables.sh](<https://github.com/istio/istio/blob/release-1.4/tools/packaging/common/istio-iptables.sh>). 
+```yaml
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          add:
+          - NET_ADMIN
+          - NET_RAW
+          drop:
+          - ALL
+        privileged: false
+        readOnlyRootFilesystem: false
+        runAsGroup: 0
+        runAsNonRoot: false
+        runAsUser: 0
+```
+
 Configured iptables chains&rules are shown below:
 
 ```bash
@@ -82,6 +99,31 @@ cactus@master01:~$ sudo nsenter -t 28318 -n iptables -t nat -S
 -A ISTIO_REDIRECT -p tcp -j REDIRECT --to-ports 15001
 ```
 
-## Since v1.5
+# Istio with CNI plugin
 
-# CNI plugin 
+In this mode, the process includes 2 steps -- plugin installation and iptables 
+configuration.
+
+## installing plugin
+
+The installation is performed by istio-cni-node component, which is a DaemonSet.
+For each pod of initialized istio-cni-node includes 2 containers:
+
+- 'intall-cni' container executes `install-cni.sh` to prepare the executable files 
+  of istio-cni, istio-cni-repair and istio-iptables.sh, the cni plugin config file 
+  such as '10-calico.conflist', and the kubeconfig file 'ZZZ-istio-cni-kubeconfig' 
+  for istio-cni service account. In the end, it also periodically checks whether 
+  istio-cni plugin is in place all along.
+- 'repair-cni' container executes `istio-cni-repair` command, the main purpose is
+  to label pod with 'cni.istio.io/uninitialized: true' when initContainer 
+  'istio-validation' fails.
+
+## configuring iptables
+
+Rules of iptables are configured by executing script 'istio-iptables.sh', which is
+driven by kubelet by running 'istio-cni' plugin. The configured chains and rules
+are the same to simple istio mode.
+
+When a pod is initializing, it firstly waits and checks whether the routing rules
+are in place by injecting and running initContainer 'istio-validation'.
+
